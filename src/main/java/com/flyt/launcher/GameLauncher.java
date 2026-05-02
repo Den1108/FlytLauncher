@@ -82,15 +82,19 @@ public class GameLauncher {
             cmd.addAll(Arrays.asList(extraJvm.split("\\s+")));
         }
 
-        // JVM аргументы из version.json (если есть)
+        // JVM аргументы из version.json
+        boolean cpAddedByJvmArgs = false;
         if (meta.has("arguments") && meta.getAsJsonObject("arguments").has("jvm")) {
             parseArguments(meta.getAsJsonObject("arguments").getAsJsonArray("jvm"), cmd,
-                    nickname, offlineUUID, version, nativesPath, classpath);
+                    nickname, offlineUUID, version, nativesPath, assetIndex, classpath);
+            cpAddedByJvmArgs = cmd.contains("-cp") || cmd.contains("-classpath");
         }
 
-        // classpath
-        cmd.add("-cp");
-        cmd.add(String.join(File.pathSeparator, classpath));
+        // classpath — добавляем только если не было в jvm аргументах
+        if (!cpAddedByJvmArgs) {
+            cmd.add("-cp");
+            cmd.add(String.join(File.pathSeparator, classpath));
+        }
 
         // Главный класс
         cmd.add(mainClass);
@@ -98,7 +102,14 @@ public class GameLauncher {
         // Аргументы игры
         if (meta.has("arguments") && meta.getAsJsonObject("arguments").has("game")) {
             parseArguments(meta.getAsJsonObject("arguments").getAsJsonArray("game"), cmd,
-                    nickname, offlineUUID, version, nativesPath, classpath);
+                    nickname, offlineUUID, version, nativesPath, assetIndex, classpath);
+            // Явно добавляем --assetsDir и --assetIndex на случай если их не передал version.json
+            if (!cmd.contains("--assetsDir")) {
+                cmd.add("--assetsDir"); cmd.add(assetsDir);
+            }
+            if (!cmd.contains("--assetIndex")) {
+                cmd.add("--assetIndex"); cmd.add(assetIndex);
+            }
         } else if (meta.has("minecraftArguments")) {
             // Старый формат (1.12 и ниже)
             String oldArgs = meta.get("minecraftArguments").getAsString();
@@ -161,36 +172,78 @@ public class GameLauncher {
     /** Парсит аргументы из нового формата (1.13+) */
     private void parseArguments(JsonArray args, List<String> cmd,
             String nickname, String uuid, String version,
-            String nativesPath, List<String> classpath) {
+            String nativesPath, String assetIndex, List<String> classpath) {
 
         for (JsonElement el : args) {
             if (el.isJsonPrimitive()) {
-                String val = el.getAsString();
-                val = replaceVars(val, nickname, uuid, version,
-                        versionsDir.contains("assets") ? "1.20" : "1.20");
-                cmd.add(val);
+                // Простая строка — подставляем переменные и добавляем
+                String val = replaceVars(el.getAsString(), nickname, uuid, version, assetIndex);
+                if (!val.isEmpty() && !val.equals("${classpath}")) {
+                    cmd.add(val);
+                }
+            } else if (el.isJsonObject()) {
+                // Условный аргумент с rules: { "rules": [...], "value": "..." или [...] }
+                JsonObject obj = el.getAsJsonObject();
+                if (!obj.has("rules") || isRuleAllowed(obj.getAsJsonArray("rules"))) {
+                    JsonElement value = obj.get("value");
+                    if (value == null) continue;
+                    if (value.isJsonPrimitive()) {
+                        String val = replaceVars(value.getAsString(), nickname, uuid, version, assetIndex);
+                        if (!val.isEmpty() && !val.equals("${classpath}")) cmd.add(val);
+                    } else if (value.isJsonArray()) {
+                        for (JsonElement v : value.getAsJsonArray()) {
+                            String val = replaceVars(v.getAsString(), nickname, uuid, version, assetIndex);
+                            if (!val.isEmpty() && !val.equals("${classpath}")) cmd.add(val);
+                        }
+                    }
+                }
             }
-            // JsonObject — условные аргументы (rules), пропускаем сложные случаи
         }
+    }
+
+    /** Проверяет разрешают ли rules добавить аргумент */
+    private boolean isRuleAllowed(JsonArray rules) {
+        boolean allowed = false;
+        String os = getOSName();
+        for (JsonElement r : rules) {
+            JsonObject rule = r.getAsJsonObject();
+            String action = rule.get("action").getAsString();
+            if (!rule.has("os") && !rule.has("features")) {
+                allowed = action.equals("allow");
+            } else if (rule.has("os")) {
+                String ruleOs = rule.getAsJsonObject("os").get("name").getAsString();
+                if (ruleOs.equals(os)) allowed = action.equals("allow");
+            }
+            // features (демо режим и т.п.) — игнорируем, не добавляем
+        }
+        return allowed;
     }
 
     /** Подставляет переменные вида ${...} */
     private String replaceVars(String template, String nickname, String uuid,
                                 String version, String assetIndex) {
+        // Для virtual-ассетов (1.7.2 и старше) game_assets указывает на virtual/legacy
+        // Для современных версий — просто assets/
+        String gameAssets = assetsDir + File.separator + "virtual" + File.separator + "legacy";
+        if (!new File(gameAssets).exists()) {
+            gameAssets = assetsDir;
+        }
+
         return template
                 .replace("${auth_player_name}",  nickname)
                 .replace("${auth_uuid}",          uuid)
-                .replace("${auth_access_token}",  "0") // офлайн
+                .replace("${auth_access_token}",  "0")       // офлайн
                 .replace("${user_type}",           "legacy")
                 .replace("${version_name}",        version)
                 .replace("${assets_root}",         assetsDir)
+                .replace("${game_assets}",         gameAssets) // для старых версий
                 .replace("${assets_index_name}",   assetIndex)
                 .replace("${game_directory}",      gameDir)
                 .replace("${version_type}",        "release")
                 .replace("${natives_directory}",   nativesDir + File.separator + version)
                 .replace("${launcher_name}",       "FlytLauncher")
                 .replace("${launcher_version}",    "1.0.0")
-                .replace("${classpath}",           ""); // classpath добавляем отдельно
+                .replace("${classpath}",           "");       // classpath добавляем через -cp
     }
 
     /** Проверяет правила библиотеки (нужна ли она на текущей ОС) */
