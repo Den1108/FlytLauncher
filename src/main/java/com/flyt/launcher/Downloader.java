@@ -6,6 +6,7 @@ import java.net.*;
 import java.nio.file.*;
 import java.security.*;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.function.*;
 
 /**
@@ -289,12 +290,5 @@ public class Downloader {
     private void progress(int pct, String msg) {
         System.out.println("[Downloader] " + pct + "% — " + msg);
         if (progressCallback != null) progressCallback.accept(pct, msg);
-    }
-
-    // Чтобы import java.util.Map работал (добавляем явно)
-    private static class Map {
-        interface Entry<K, V> {
-            K getKey(); V getValue();
-        }
     }
 }
