@@ -28,12 +28,6 @@ public class GameLauncher {
 
     /**
      * Запускает указанную версию Minecraft.
-     *
-     * @param version   например "1.20.4"
-     * @param nickname  никнейм игрока (офлайн-режим)
-     * @param ramMB     сколько МБ выделить (-Xmx)
-     * @param extraJvm  дополнительные JVM флаги, например "-XX:+UseG1GC"
-     * @return Process запущенного Minecraft
      */
     public Process launch(String version, String nickname, int ramMB, String extraJvm,
                           java.util.function.BiConsumer<Integer, String> progressCallback) throws Exception {
@@ -113,7 +107,8 @@ public class GameLauncher {
         } else if (meta.has("minecraftArguments")) {
             // Старый формат (1.12 и ниже)
             String oldArgs = meta.get("minecraftArguments").getAsString();
-            oldArgs = replaceVars(oldArgs, nickname, offlineUUID, version, assetIndex);
+            String cpStr = String.join(File.pathSeparator, classpath);
+            oldArgs = replaceVars(oldArgs, nickname, offlineUUID, version, assetIndex, cpStr);
             cmd.addAll(Arrays.asList(oldArgs.split("\\s+")));
         }
 
@@ -174,11 +169,13 @@ public class GameLauncher {
             String nickname, String uuid, String version,
             String nativesPath, String assetIndex, List<String> classpath) {
 
+        String cpStr = String.join(File.pathSeparator, classpath);
+
         for (JsonElement el : args) {
             if (el.isJsonPrimitive()) {
                 // Простая строка — подставляем переменные и добавляем
-                String val = replaceVars(el.getAsString(), nickname, uuid, version, assetIndex);
-                if (!val.isEmpty() && !val.equals("${classpath}")) {
+                String val = replaceVars(el.getAsString(), nickname, uuid, version, assetIndex, cpStr);
+                if (!val.isEmpty()) {
                     cmd.add(val);
                 }
             } else if (el.isJsonObject()) {
@@ -188,12 +185,12 @@ public class GameLauncher {
                     JsonElement value = obj.get("value");
                     if (value == null) continue;
                     if (value.isJsonPrimitive()) {
-                        String val = replaceVars(value.getAsString(), nickname, uuid, version, assetIndex);
-                        if (!val.isEmpty() && !val.equals("${classpath}")) cmd.add(val);
+                        String val = replaceVars(value.getAsString(), nickname, uuid, version, assetIndex, cpStr);
+                        if (!val.isEmpty()) cmd.add(val);
                     } else if (value.isJsonArray()) {
                         for (JsonElement v : value.getAsJsonArray()) {
-                            String val = replaceVars(v.getAsString(), nickname, uuid, version, assetIndex);
-                            if (!val.isEmpty() && !val.equals("${classpath}")) cmd.add(val);
+                            String val = replaceVars(v.getAsString(), nickname, uuid, version, assetIndex, cpStr);
+                            if (!val.isEmpty()) cmd.add(val);
                         }
                     }
                 }
@@ -234,7 +231,7 @@ public class GameLauncher {
 
     /** Подставляет переменные вида ${...} */
     private String replaceVars(String template, String nickname, String uuid,
-                                String version, String assetIndex) {
+                                String version, String assetIndex, String classpathStr) {
         // Для virtual-ассетов (1.7.2 и старше) game_assets указывает на virtual/legacy
         // Для современных версий — просто assets/
         String gameAssets = assetsDir + File.separator + "virtual" + File.separator + "legacy";
@@ -256,7 +253,7 @@ public class GameLauncher {
                 .replace("${natives_directory}",   nativesDir + File.separator + version)
                 .replace("${launcher_name}",       "FlytLauncher")
                 .replace("${launcher_version}",    "1.0.0")
-                .replace("${classpath}",           "");       // classpath добавляем через -cp
+                .replace("${classpath}",           classpathStr); 
     }
 
     /** Проверяет правила библиотеки (нужна ли она на текущей ОС) */
@@ -274,12 +271,6 @@ public class GameLauncher {
 
     /**
      * Возвращает путь к java.exe.
-     * Порядок поиска:
-     *  1. Уже скачанный JRE в <gameDir>/runtime/
-     *  2. JRE внутри jpackage-сборки (java.home)
-     *  3. JAVA_HOME
-     *  4. Системный PATH (where/which)
-     *  5. Автоматическая загрузка Adoptium JRE 17
      */
     private String getJavaExecutable(BiConsumer<Integer, String> progressCallback) throws Exception {
         boolean isWin  = System.getProperty("os.name").toLowerCase().contains("win");
