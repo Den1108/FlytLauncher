@@ -464,7 +464,11 @@ public class Main extends JFrame {
                     // Запускаем игру
                     SwingUtilities.invokeLater(() -> statusLabel.setText("Запуск Minecraft " + version + "..."));
                     GameLauncher launcher = new GameLauncher(BASE_DIR);
-                    return launcher.launch(version, nick, ramMB, jvm);
+                    return launcher.launch(version, nick, ramMB, jvm, (pct, msg) ->
+                            SwingUtilities.invokeLater(() -> {
+                                progressBar.setValue(pct);
+                                statusLabel.setText(msg);
+                            }));
 
                 } catch (Exception ex) {
                     error = ex.getMessage();

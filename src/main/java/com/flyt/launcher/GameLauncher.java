@@ -4,6 +4,7 @@ import com.google.gson.*;
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
+import java.util.function.BiConsumer;
 
 /**
  * Запускает Minecraft через ProcessBuilder.
@@ -34,7 +35,8 @@ public class GameLauncher {
      * @param extraJvm  дополнительные JVM флаги, например "-XX:+UseG1GC"
      * @return Process запущенного Minecraft
      */
-    public Process launch(String version, String nickname, int ramMB, String extraJvm) throws Exception {
+    public Process launch(String version, String nickname, int ramMB, String extraJvm,
+                          java.util.function.BiConsumer<Integer, String> progressCallback) throws Exception {
         // Путь к version.json
         File versionJson = new File(versionsDir + File.separator + version
                 + File.separator + version + ".json");
@@ -63,8 +65,8 @@ public class GameLauncher {
         // Собираем команду
         List<String> cmd = new ArrayList<>();
 
-        // java
-        cmd.add(getJavaExecutable());
+        // java (ищем или скачиваем автоматически)
+        cmd.add(getJavaExecutable(progressCallback));
 
         // Память
         cmd.add("-Xmx" + ramMB + "M");
@@ -221,35 +223,41 @@ public class GameLauncher {
         return "linux";
     }
 
-    private String getJavaExecutable() throws IOException {
-        boolean isWin = System.getProperty("os.name").toLowerCase().contains("win");
+    /**
+     * Возвращает путь к java.exe.
+     * Порядок поиска:
+     *  1. Уже скачанный JRE в <gameDir>/runtime/
+     *  2. JRE внутри jpackage-сборки (java.home)
+     *  3. JAVA_HOME
+     *  4. Системный PATH (where/which)
+     *  5. Автоматическая загрузка Adoptium JRE 17
+     */
+    private String getJavaExecutable(BiConsumer<Integer, String> progressCallback) throws Exception {
+        boolean isWin  = System.getProperty("os.name").toLowerCase().contains("win");
         String javaExe = isWin ? "java.exe" : "java";
 
-        // 1. java.home — стандартный путь JRE/JDK
+        // 1. Скачанный нами JRE в папке runtime/
+        JavaDownloader jd = new JavaDownloader(gameDir);
+        File runtimeJava = findInRuntime(javaExe);
+        if (runtimeJava != null) return runtimeJava.getAbsolutePath();
+
+        // 2. java.home (работает в обычном JDK, но не в jpackage-сборке)
         String home = System.getProperty("java.home");
         if (home != null) {
             File f = new File(home, "bin" + File.separator + javaExe);
             if (f.exists()) return f.getAbsolutePath();
-
-            // jpackage кладёт runtime рядом с .exe: <installDir>/runtime/bin/java.exe
-            // java.home в этом случае = <installDir>/runtime, поднимаемся на уровень выше
-            File parent = new File(home).getParentFile();
-            if (parent != null) {
-                File f2 = new File(parent, "runtime" + File.separator + "bin" + File.separator + javaExe);
-                if (f2.exists()) return f2.getAbsolutePath();
-            }
         }
 
-        // 2. JAVA_HOME переменная окружения
+        // 3. JAVA_HOME переменная окружения
         String javaHome = System.getenv("JAVA_HOME");
         if (javaHome != null) {
             File f = new File(javaHome, "bin" + File.separator + javaExe);
             if (f.exists()) return f.getAbsolutePath();
         }
 
-        // 3. Ищем java в PATH через where (Windows) / which (Linux/Mac)
-        String finder = isWin ? "where" : "which";
+        // 4. Ищем через where/which
         try {
+            String finder = isWin ? "where" : "which";
             Process p = new ProcessBuilder(finder, "java").start();
             String result = new String(p.getInputStream().readAllBytes()).trim();
             if (!result.isEmpty()) {
@@ -258,8 +266,28 @@ public class GameLauncher {
             }
         } catch (Exception ignored) {}
 
-        // 4. Fallback — просто "java" из PATH
-        return javaExe;
+        // 5. Java не найдена — качаем автоматически
+        if (progressCallback != null) progressCallback.accept(0, "Java не найдена, начинаем загрузку...");
+        jd.setProgressCallback(progressCallback);
+        return jd.getOrDownloadJava();
+    }
+
+    /** Ищет java в папке runtime внутри gameDir */
+    private File findInRuntime(String javaExe) {
+        File dir = new File(gameDir + File.separator + "runtime");
+        if (!dir.exists()) return null;
+        File[] subdirs = dir.listFiles(File::isDirectory);
+        if (subdirs == null) return null;
+        for (File sub : subdirs) {
+            File c = new File(sub, "bin" + File.separator + javaExe);
+            if (c.exists()) return c;
+            File[] inner = sub.listFiles(File::isDirectory);
+            if (inner != null) for (File d : inner) {
+                File c2 = new File(d, "bin" + File.separator + javaExe);
+                if (c2.exists()) return c2;
+            }
+        }
+        return null;
     }
 
     /** Генерирует стабильный UUID для офлайн-режима на основе никнейма */
