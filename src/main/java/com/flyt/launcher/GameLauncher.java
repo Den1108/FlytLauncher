@@ -206,15 +206,28 @@ public class GameLauncher {
         boolean allowed = false;
         String os = getOSName();
         for (JsonElement r : rules) {
+            if (!r.isJsonObject()) continue;
             JsonObject rule = r.getAsJsonObject();
+            if (!rule.has("action")) continue;
             String action = rule.get("action").getAsString();
-            if (!rule.has("os") && !rule.has("features")) {
-                allowed = action.equals("allow");
+            if (rule.has("features")) {
+                // features (демо, custom resolution) — пропускаем опциональные
+                continue;
             } else if (rule.has("os")) {
-                String ruleOs = rule.getAsJsonObject("os").get("name").getAsString();
-                if (ruleOs.equals(os)) allowed = action.equals("allow");
+                JsonObject osObj = rule.getAsJsonObject("os");
+                JsonElement nameEl = osObj.get("name");
+                if (nameEl != null && !nameEl.isJsonNull()) {
+                    if (nameEl.getAsString().equals(os)) {
+                        allowed = action.equals("allow");
+                    }
+                } else {
+                    // os объект без name (например только version) — применяем
+                    allowed = action.equals("allow");
+                }
+            } else {
+                // Нет ни os ни features — глобальное правило
+                allowed = action.equals("allow");
             }
-            // features (демо режим и т.п.) — игнорируем, не добавляем
         }
         return allowed;
     }
@@ -249,24 +262,7 @@ public class GameLauncher {
     /** Проверяет правила библиотеки (нужна ли она на текущей ОС) */
     private boolean isLibraryAllowed(JsonObject lib) {
         if (!lib.has("rules")) return true;
-
-        String os = getOSName();
-        boolean allowed = false;
-
-        for (JsonElement rule : lib.getAsJsonArray("rules")) {
-            JsonObject r = rule.getAsJsonObject();
-            String action = r.get("action").getAsString();
-
-            if (!r.has("os")) {
-                allowed = action.equals("allow");
-            } else {
-                String ruleOs = r.getAsJsonObject("os").get("name").getAsString();
-                if (ruleOs.equals(os)) {
-                    allowed = action.equals("allow");
-                }
-            }
-        }
-        return allowed;
+        return isRuleAllowed(lib.getAsJsonArray("rules"));
     }
 
     private String getOSName() {
