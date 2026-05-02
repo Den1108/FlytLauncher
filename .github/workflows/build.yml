@@ -30,7 +30,9 @@ jobs:
                  --type exe `
                  --dest output/ `
                  --win-dir-chooser `
-                 --win-shortcut
+                 --win-menu `
+                 --win-shortcut `
+                 --about-url "https://github.com/${{ github.repository }}"
 
     - name: Upload EXE
       uses: actions/upload-artifact@v4
