@@ -221,11 +221,45 @@ public class GameLauncher {
         return "linux";
     }
 
-    private String getJavaExecutable() {
+    private String getJavaExecutable() throws IOException {
+        boolean isWin = System.getProperty("os.name").toLowerCase().contains("win");
+        String javaExe = isWin ? "java.exe" : "java";
+
+        // 1. java.home — стандартный путь JRE/JDK
         String home = System.getProperty("java.home");
-        String java = home + File.separator + "bin" + File.separator + "java";
-        if (System.getProperty("os.name").toLowerCase().contains("win")) java += ".exe";
-        return java;
+        if (home != null) {
+            File f = new File(home, "bin" + File.separator + javaExe);
+            if (f.exists()) return f.getAbsolutePath();
+
+            // jpackage кладёт runtime рядом с .exe: <installDir>/runtime/bin/java.exe
+            // java.home в этом случае = <installDir>/runtime, поднимаемся на уровень выше
+            File parent = new File(home).getParentFile();
+            if (parent != null) {
+                File f2 = new File(parent, "runtime" + File.separator + "bin" + File.separator + javaExe);
+                if (f2.exists()) return f2.getAbsolutePath();
+            }
+        }
+
+        // 2. JAVA_HOME переменная окружения
+        String javaHome = System.getenv("JAVA_HOME");
+        if (javaHome != null) {
+            File f = new File(javaHome, "bin" + File.separator + javaExe);
+            if (f.exists()) return f.getAbsolutePath();
+        }
+
+        // 3. Ищем java в PATH через where (Windows) / which (Linux/Mac)
+        String finder = isWin ? "where" : "which";
+        try {
+            Process p = new ProcessBuilder(finder, "java").start();
+            String result = new String(p.getInputStream().readAllBytes()).trim();
+            if (!result.isEmpty()) {
+                String firstLine = result.split("\\r?\\n")[0].trim();
+                if (new File(firstLine).exists()) return firstLine;
+            }
+        } catch (Exception ignored) {}
+
+        // 4. Fallback — просто "java" из PATH
+        return javaExe;
     }
 
     /** Генерирует стабильный UUID для офлайн-режима на основе никнейма */
