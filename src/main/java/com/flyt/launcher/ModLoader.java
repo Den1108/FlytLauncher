@@ -169,45 +169,74 @@ public class ModLoader {
     public String installForge(String mcVersion, String forgeVersion, String javaPath) throws Exception {
         progress(0, "Установка Forge " + forgeVersion + " для " + mcVersion + "…");
 
-        String fullVer     = mcVersion + "-" + forgeVersion;
+        // ── 1. Создаём launcher_profiles.json ────────────────────────────────
+        // Forge installer требует этот файл — без него он отказывается работать.
+        // Формат минимальный, но достаточный для установщика.
+        progress(3, "Подготовка окружения для Forge installer…");
+        createLauncherProfiles();
+
+        // ── 2. Скачиваем installer ────────────────────────────────────────────
+        String fullVer       = mcVersion + "-" + forgeVersion;
         String installerName = "forge-" + fullVer + "-installer.jar";
         String installerUrl  = FORGE_MAVEN + "/" + fullVer + "/" + installerName;
 
-        File installerFile = new File(baseDir + File.separator + "temp" + File.separator + installerName);
-        installerFile.getParentFile().mkdirs();
+        File tempDir       = new File(baseDir + File.separator + "temp");
+        File installerFile = new File(tempDir, installerName);
+        tempDir.mkdirs();
 
         progress(5, "Загрузка Forge installer (" + installerName + ")…");
         downloadFile(installerUrl, installerFile);
 
+        // ── 3. Запускаем installer ────────────────────────────────────────────
+        // Флаг: --installClient (без аргумента пути — installer сам читает
+        // launcher_profiles.json и определяет куда устанавливать).
         progress(50, "Запуск Forge installer…");
 
-        // Запускаем installer headless
         ProcessBuilder pb = new ProcessBuilder(
             javaPath,
             "-jar", installerFile.getAbsolutePath(),
-            "--installClient", baseDir
+            "--installClient"
         );
+        // Рабочая директория = baseDir, именно там лежит launcher_profiles.json
         pb.directory(new File(baseDir));
         pb.redirectErrorStream(true);
         Process proc = pb.start();
 
-        // Читаем вывод установщика
+        // Читаем вывод установщика и пробрасываем в прогресс
         Thread reader = new Thread(() -> {
             try (BufferedReader br = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
                 String line;
                 while ((line = br.readLine()) != null) {
-                    String finalLine = line;
-                    System.out.println("[Forge Installer] " + finalLine);
+                    System.out.println("[Forge] " + line);
+                    String msg = line;
+                    SwingUtilities.invokeLater(() -> progress(75, msg.length() > 60 ? msg.substring(0,60)+"…" : msg));
                 }
             } catch (Exception ignored) {}
         });
+        reader.setDaemon(true);
         reader.start();
 
         int exit = proc.waitFor();
-        installerFile.delete(); // убираем installer
+        installerFile.delete();
 
         if (exit != 0) {
-            throw new IOException("Forge installer завершился с кодом " + exit);
+            // Читаем лог если есть
+            File logFile = new File(baseDir, installerName + ".log");
+            String detail = "";
+            if (logFile.exists()) {
+                try {
+                    byte[] bytes = java.nio.file.Files.readAllBytes(logFile.toPath());
+                    detail = new String(bytes);
+                    // Ищем строку с ошибкой
+                    for (String ln : detail.split("\n")) {
+                        if (ln.contains("error") || ln.contains("Error") || ln.contains("There was")) {
+                            detail = ln.trim(); break;
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+            throw new IOException("Forge installer завершился с кодом " + exit
+                + (detail.isEmpty() ? "" : "\n" + detail));
         }
 
         String versionId = mcVersion + "-forge-" + forgeVersion;
