@@ -181,16 +181,6 @@ public class ModLoader {
 
         progress(50, "Запуск Forge installer…");
 
-        // ИСПРАВЛЕНИЕ: Создаем файл-пустышку launcher_profiles.json, 
-        // чтобы установщик Forge не завершался с кодом 1 из-за его отсутствия.
-        File profilesFile = new File(baseDir, "launcher_profiles.json");
-        if (!profilesFile.exists()) {
-            profilesFile.getParentFile().mkdirs();
-            try (FileWriter writer = new FileWriter(profilesFile)) {
-                writer.write("{\"profiles\": {}}");
-            }
-        }
-
         // Запускаем installer headless
         ProcessBuilder pb = new ProcessBuilder(
             javaPath,
