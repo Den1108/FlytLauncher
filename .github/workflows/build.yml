@@ -6,7 +6,8 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest # Теперь собираем на Windows для получения .exe
+    runs-on: windows-latest
+
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
@@ -21,8 +22,31 @@ jobs:
     - name: Build with Maven
       run: mvn package
 
+    # Конвертируем PNG → ICO для иконки .exe
+    # Положи свой icon.png в папку src/main/resources/
+    - name: Convert PNG to ICO
+      run: |
+        pip install Pillow
+        python -c "
+        from PIL import Image
+        import os
+        src = 'src/main/resources/icon.png'
+        if os.path.exists(src):
+            img = Image.open(src)
+            img.save('src/main/resources/icon.ico', format='ICO', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
+            print('icon.ico created')
+        else:
+            print('icon.png not found, skipping')
+        "
+
     - name: Create EXE with JPackage
       run: |
+        # Проверяем наличие иконки
+        $iconArg = ""
+        if (Test-Path "src/main/resources/icon.ico") {
+          $iconArg = "--icon src/main/resources/icon.ico"
+        }
+
         jpackage --input target/ `
                  --name FlytLauncher `
                  --main-jar FlytLauncher-1.0-SNAPSHOT.jar `
@@ -32,10 +56,16 @@ jobs:
                  --win-dir-chooser `
                  --win-menu `
                  --win-shortcut `
-                 --about-url "https://github.com/${{ github.repository }}"
+                 --win-shortcut-prompt `
+                 --app-version "1.0.0" `
+                 --description "FlytLauncher — Minecraft Launcher" `
+                 --vendor "FlytLauncher" `
+                 --about-url "https://github.com/${{ github.repository }}" `
+                 $(if ($iconArg) { $iconArg } else { "" })
 
     - name: Upload EXE
       uses: actions/upload-artifact@v4
       with:
         name: FlytLauncher-Windows-EXE
         path: output/*.exe
+        retention-days: 30
