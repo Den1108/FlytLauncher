@@ -169,74 +169,55 @@ public class ModLoader {
     public String installForge(String mcVersion, String forgeVersion, String javaPath) throws Exception {
         progress(0, "Установка Forge " + forgeVersion + " для " + mcVersion + "…");
 
-        // ── 1. Создаём launcher_profiles.json ────────────────────────────────
-        // Forge installer требует этот файл — без него он отказывается работать.
-        // Формат минимальный, но достаточный для установщика.
-        progress(3, "Подготовка окружения для Forge installer…");
-        createLauncherProfiles();
-
-        // ── 2. Скачиваем installer ────────────────────────────────────────────
-        String fullVer       = mcVersion + "-" + forgeVersion;
+        String fullVer     = mcVersion + "-" + forgeVersion;
         String installerName = "forge-" + fullVer + "-installer.jar";
         String installerUrl  = FORGE_MAVEN + "/" + fullVer + "/" + installerName;
 
-        File tempDir       = new File(baseDir + File.separator + "temp");
-        File installerFile = new File(tempDir, installerName);
-        tempDir.mkdirs();
+        File installerFile = new File(baseDir + File.separator + "temp" + File.separator + installerName);
+        installerFile.getParentFile().mkdirs();
 
         progress(5, "Загрузка Forge installer (" + installerName + ")…");
         downloadFile(installerUrl, installerFile);
 
-        // ── 3. Запускаем installer ────────────────────────────────────────────
-        // Флаг: --installClient (без аргумента пути — installer сам читает
-        // launcher_profiles.json и определяет куда устанавливать).
         progress(50, "Запуск Forge installer…");
 
+        // ИСПРАВЛЕНИЕ: Создаем файл-пустышку launcher_profiles.json, 
+        // чтобы установщик Forge не завершался с кодом 1 из-за его отсутствия.
+        File profilesFile = new File(baseDir, "launcher_profiles.json");
+        if (!profilesFile.exists()) {
+            profilesFile.getParentFile().mkdirs();
+            try (FileWriter writer = new FileWriter(profilesFile)) {
+                writer.write("{\"profiles\": {}}");
+            }
+        }
+
+        // Запускаем installer headless
         ProcessBuilder pb = new ProcessBuilder(
             javaPath,
             "-jar", installerFile.getAbsolutePath(),
-            "--installClient"
+            "--installClient", baseDir
         );
-        // Рабочая директория = baseDir, именно там лежит launcher_profiles.json
         pb.directory(new File(baseDir));
         pb.redirectErrorStream(true);
         Process proc = pb.start();
 
-        // Читаем вывод установщика и пробрасываем в прогресс
+        // Читаем вывод установщика
         Thread reader = new Thread(() -> {
             try (BufferedReader br = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
                 String line;
                 while ((line = br.readLine()) != null) {
-                    System.out.println("[Forge] " + line);
-                    String msg = line;
-                    SwingUtilities.invokeLater(() -> progress(75, msg.length() > 60 ? msg.substring(0,60)+"…" : msg));
+                    String finalLine = line;
+                    System.out.println("[Forge Installer] " + finalLine);
                 }
             } catch (Exception ignored) {}
         });
-        reader.setDaemon(true);
         reader.start();
 
         int exit = proc.waitFor();
-        installerFile.delete();
+        installerFile.delete(); // убираем installer
 
         if (exit != 0) {
-            // Читаем лог если есть
-            File logFile = new File(baseDir, installerName + ".log");
-            String detail = "";
-            if (logFile.exists()) {
-                try {
-                    byte[] bytes = java.nio.file.Files.readAllBytes(logFile.toPath());
-                    detail = new String(bytes);
-                    // Ищем строку с ошибкой
-                    for (String ln : detail.split("\n")) {
-                        if (ln.contains("error") || ln.contains("Error") || ln.contains("There was")) {
-                            detail = ln.trim(); break;
-                        }
-                    }
-                } catch (Exception ignored) {}
-            }
-            throw new IOException("Forge installer завершился с кодом " + exit
-                + (detail.isEmpty() ? "" : "\n" + detail));
+            throw new IOException("Forge installer завершился с кодом " + exit);
         }
 
         String versionId = mcVersion + "-forge-" + forgeVersion;
